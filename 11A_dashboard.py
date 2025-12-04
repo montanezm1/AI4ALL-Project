@@ -1,13 +1,7 @@
 """
-OSTEOPOROSIS DETECTION DASHBOARD
-===================================
-Ensemble prediction system using three trained models:
-- Michael's Model: ResNet50 (Layer4 unfrozen)
-- Dia's Model: EfficientNet-B3
-- Sydney's Model: ResNet18 (Fully trainable)
-
-Users upload knee X-ray images and get ensemble predictions
-with confidence scores for: Normal, Osteopenia, Osteoporosis
+OSTEOPOROSIS DETECTION DASHBOARD - FINAL WORKING VERSION
+=========================================================
+Properly loads models saved directly from training
 """
 
 import streamlit as st
@@ -18,6 +12,7 @@ from PIL import Image
 import numpy as np
 import plotly.graph_objects as go
 import plotly.express as px
+import os
 
 # ========== PAGE CONFIGURATION ==========
 st.set_page_config(
@@ -43,12 +38,6 @@ st.markdown("""
         text-align: center;
         margin-bottom: 2rem;
     }
-    .model-card {
-        background-color: #f0f2f6;
-        padding: 1.5rem;
-        border-radius: 10px;
-        margin: 1rem 0;
-    }
     .prediction-box {
         background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
         color: white;
@@ -59,54 +48,8 @@ st.markdown("""
         font-weight: bold;
         margin: 2rem 0;
     }
-    .confidence-score {
-        font-size: 1.5rem;
-        color: #667eea;
-        font-weight: bold;
-    }
 </style>
 """, unsafe_allow_html=True)
-
-# ========== MODEL ARCHITECTURES ==========
-
-class MichaelModel(nn.Module):
-    """ResNet50 with Layer4 unfrozen"""
-    def __init__(self, num_classes=3):
-        super(MichaelModel, self).__init__()
-        self.model = models.resnet50(pretrained=False)
-        num_features = self.model.fc.in_features
-        self.model.fc = nn.Linear(num_features, num_classes)
-    
-    def forward(self, x):
-        return self.model(x)
-
-class DiaModel(nn.Module):
-    """EfficientNet-B3 with custom classifier"""
-    def __init__(self, num_classes=3):
-        super(DiaModel, self).__init__()
-        self.backbone = models.efficientnet_b3(pretrained=False)
-        in_features = 1536  # EfficientNet-B3 features
-        self.backbone.classifier = nn.Sequential(
-            nn.Dropout(p=0.3),
-            nn.Linear(in_features, 512),
-            nn.ReLU(),
-            nn.Dropout(p=0.3),
-            nn.Linear(512, num_classes)
-        )
-    
-    def forward(self, x):
-        return self.backbone(x)
-
-class SydneyModel(nn.Module):
-    """ResNet18 fully trainable"""
-    def __init__(self, num_classes=3):
-        super(SydneyModel, self).__init__()
-        self.model = models.resnet18(pretrained=False)
-        num_features = self.model.fc.in_features
-        self.model.fc = nn.Linear(num_features, num_classes)
-    
-    def forward(self, x):
-        return self.model(x)
 
 # ========== TRANSFORMS ==========
 transform = transforms.Compose([
@@ -119,51 +62,81 @@ transform = transforms.Compose([
 # ========== MODEL LOADING ==========
 @st.cache_resource
 def load_models(device):
-    """Load all three trained models"""
+    """Load all available trained models"""
     models_dict = {}
     class_names = ['Normal', 'Osteopenia', 'Osteoporosis']
     
-    try:
-        # Michael's Model
-        michael_model = MichaelModel(num_classes=3).to(device)
+    # Sydney's ResNet18 Model
+    if os.path.exists('sydney_best_model.pth'):
         try:
-            michael_model.load_state_dict(torch.load('michael_model.pth', map_location=device))
-            michael_model.eval()
-            models_dict['Michael (ResNet50)'] = michael_model
-        except FileNotFoundError:
-            st.warning("⚠️ Michael's model not found. Place 'michael_model.pth' in the app directory.")
-        
-        # Dia's Model
-        dia_model = DiaModel(num_classes=3).to(device)
-        try:
-            dia_model.load_state_dict(torch.load('best_osteoporosis_model.pth', map_location=device))
-            dia_model.eval()
-            models_dict['Dia (EfficientNet-B3)'] = dia_model
-        except FileNotFoundError:
-            st.warning("⚠️ Dia's model not found. Place 'best_osteoporosis_model.pth' in the app directory.")
-        
-        # Sydney's Model
-        sydney_model = SydneyModel(num_classes=3).to(device)
-        try:
-            sydney_checkpoint = torch.load('sydney_best_model.pth', map_location=device)
-            if isinstance(sydney_checkpoint, dict) and 'model_state_dict' in sydney_checkpoint:
-                sydney_model.load_state_dict(sydney_checkpoint['model_state_dict'])
-            else:
-                sydney_model.load_state_dict(sydney_checkpoint)
+            sydney_model = models.resnet18(weights=None)  # No pretrained weights
+            num_ftrs = sydney_model.fc.in_features
+            sydney_model.fc = nn.Linear(num_ftrs, 3)
+            
+            # Load the state dict
+            sydney_model.load_state_dict(torch.load('sydney_best_model.pth', map_location=device, weights_only=True))
+            sydney_model.to(device)
             sydney_model.eval()
             models_dict['Sydney (ResNet18)'] = sydney_model
-        except FileNotFoundError:
-            st.warning("⚠️ Sydney's model not found. Place 'sydney_best_model.pth' in the app directory.")
-        
-        if not models_dict:
-            st.error("❌ No models found! Please add model files to the directory.")
-            return None, class_names
-        
-        return models_dict, class_names
+            st.success("✅ Sydney's ResNet18 loaded")
+        except Exception as e:
+            st.error(f"❌ Sydney's model failed: {str(e)[:200]}")
     
-    except Exception as e:
-        st.error(f"Error loading models: {e}")
+    # ResNet50 Model  
+    if os.path.exists('resnet50_best_model.pth'):
+        try:
+            resnet50_model = models.resnet50(weights=None)
+            num_ftrs = resnet50_model.fc.in_features
+            resnet50_model.fc = nn.Linear(num_ftrs, 3)
+            
+            resnet50_model.load_state_dict(torch.load('resnet50_best_model.pth', map_location=device, weights_only=True))
+            resnet50_model.to(device)
+            resnet50_model.eval()
+            models_dict['Michael (ResNet50)'] = resnet50_model
+            st.success("✅ Michael's ResNet50 loaded")
+        except Exception as e:
+            st.error(f"❌ Michael's model failed: {str(e)[:200]}")
+    
+    # Dia's EfficientNet-B3 (if available)
+    if os.path.exists('best_osteoporosis_model.pth'):
+        try:
+            dia_model = models.efficientnet_b3(weights=None)
+            in_features = 1536
+            dia_model.classifier = nn.Sequential(
+                nn.Dropout(p=0.3),
+                nn.Linear(in_features, 512),
+                nn.ReLU(),
+                nn.Dropout(p=0.3),
+                nn.Linear(512, 3)
+            )
+            dia_model.load_state_dict(torch.load('best_osteoporosis_model.pth', map_location=device, weights_only=True))
+            dia_model.to(device)
+            dia_model.eval()
+            models_dict['Dia (EfficientNet-B3)'] = dia_model
+            st.success("✅ Dia's EfficientNet-B3 loaded")
+        except Exception as e:
+            st.warning(f"⚠️ Dia's model not loaded (different architecture expected)")
+    
+    # Michael's model (if different from ResNet50)
+    if os.path.exists('michael_model.pth'):
+        try:
+            michael_model = models.resnet50(weights=None)
+            num_ftrs = michael_model.fc.in_features
+            michael_model.fc = nn.Linear(num_ftrs, 3)
+            
+            michael_model.load_state_dict(torch.load('michael_model.pth', map_location=device, weights_only=True))
+            michael_model.to(device)
+            michael_model.eval()
+            models_dict['Michael (ResNet50)'] = michael_model
+            st.success("✅ Michael's ResNet50 loaded")
+        except Exception as e:
+            st.error(f"❌ Michael's model failed: {str(e)[:200]}")
+    
+    if not models_dict:
+        st.error("❌ No models could be loaded! Check your .pth files.")
         return None, class_names
+    
+    return models_dict, class_names
 
 # ========== PREDICTION FUNCTIONS ==========
 def predict_single_model(model, image_tensor, device):
@@ -175,14 +148,7 @@ def predict_single_model(model, image_tensor, device):
         return probs.cpu().numpy()[0]
 
 def ensemble_predict(models_dict, image, device, class_names):
-    """
-    Ensemble prediction: average probabilities from all models
-    
-    Returns:
-        prediction: Predicted class
-        confidence: Confidence score (0-100)
-        all_probs: Dictionary of probabilities from each model
-    """
+    """Ensemble prediction using all available models"""
     image_tensor = transform(image).unsqueeze(0)
     
     all_predictions = {}
@@ -206,7 +172,6 @@ def ensemble_predict(models_dict, image, device, class_names):
 # ========== VISUALIZATION FUNCTIONS ==========
 def create_confidence_gauge(confidence, prediction):
     """Create a gauge chart for confidence"""
-    # Color based on prediction
     color_map = {
         'Normal': '#90EE90',
         'Osteopenia': '#FFD700',
@@ -309,22 +274,24 @@ def main():
         models_dict, class_names = load_models(device)
     
     if not models_dict:
+        st.error("Please ensure your .pth model files are in the same directory as this script.")
         st.stop()
     
-    st.success(f"✅ Loaded {len(models_dict)} model(s): {', '.join(models_dict.keys())}")
+    st.success(f"✅ Successfully loaded {len(models_dict)} model(s)")
     
     # Sidebar
     with st.sidebar:
         st.header("📋 About")
+        st.write(f"""
+        This application uses **{len(models_dict)} deep learning model(s)** 
+        to analyze knee X-rays and detect osteoporosis.
+        
+        **Models Loaded:**
+        """)
+        for model_name in models_dict.keys():
+            st.write(f"- 🔷 {model_name}")
+        
         st.write("""
-        This application uses an **ensemble of three deep learning models** 
-        to analyze knee X-rays and detect osteoporosis:
-        
-        **Models:**
-        - 🔷 **Michael's Model**: ResNet50 (Layer4 fine-tuned)
-        - 🔶 **Dia's Model**: EfficientNet-B3 with custom classifier
-        - 🔵 **Sydney's Model**: ResNet18 (fully fine-tuned)
-        
         **How it works:**
         1. Upload a knee X-ray image
         2. Each model independently analyzes the image
@@ -383,6 +350,13 @@ def main():
                         models_dict, image, device, class_names
                     )
                     
+                    # Store in session state
+                    st.session_state['analyzed'] = True
+                    st.session_state['prediction'] = prediction
+                    st.session_state['confidence'] = confidence
+                    st.session_state['all_predictions'] = all_predictions
+                    st.session_state['ensemble_probs'] = ensemble_probs
+                    
                     # Display result
                     st.markdown(f"""
                     <div class="prediction-box">
@@ -395,7 +369,12 @@ def main():
                     st.plotly_chart(gauge_fig, use_container_width=True)
         
         # Detailed results (appears after analysis)
-        if st.session_state.get('analyzed', False) or 'prediction' in locals():
+        if st.session_state.get('analyzed', False):
+            prediction = st.session_state['prediction']
+            confidence = st.session_state['confidence']
+            all_predictions = st.session_state['all_predictions']
+            ensemble_probs = st.session_state['ensemble_probs']
+            
             st.markdown("---")
             st.header("📊 Detailed Analysis")
             
@@ -436,7 +415,7 @@ def main():
                         
                         # Show all probabilities
                         for i, class_name in enumerate(class_names):
-                            st.progress(probs[i], text=f"{class_name}: {probs[i]*100:.1f}%")
+                            st.progress(float(probs[i]), text=f"{class_name}: {probs[i]*100:.1f}%")
             
             with tab3:
                 st.subheader("Clinical Interpretation")
@@ -472,7 +451,6 @@ def main():
                 - {len(models_dict)} independent models analyzed your X-ray
                 - Each model used different architectures and training strategies
                 - Final prediction combines all models using weighted averaging
-                - Ensemble approach typically provides **more robust** predictions than individual models
                 
                 **Confidence Level:** {confidence:.1f}%
                 - 90-100%: Very High Confidence
@@ -480,21 +458,6 @@ def main():
                 - 50-75%: Moderate Confidence
                 - Below 50%: Low Confidence (manual review recommended)
                 """)
-                
-                st.subheader("Recommendations")
-                if confidence < 70:
-                    st.warning("""
-                    ⚠️ **Confidence is below 70%**
-                    - Consider additional imaging
-                    - Manual review by radiologist recommended
-                    - Multiple views may provide better assessment
-                    """)
-                else:
-                    st.success("""
-                    ✅ **High confidence prediction**
-                    - Results are consistent across models
-                    - However, clinical correlation is still essential
-                    """)
     
     else:
         # Instructions when no image uploaded
@@ -505,14 +468,6 @@ def main():
         3. Click "Analyze X-Ray" to get instant AI-powered diagnosis
         
         **Supported formats:** JPG, PNG, JPEG
-        """)
-        
-        # Example images section
-        st.markdown("---")
-        st.header("📚 Example Results")
-        st.write("""
-        The system analyzes knee X-rays and classifies them into three categories 
-        based on bone density patterns detected by the ensemble of deep learning models.
         """)
 
 # ========== RUN APP ==========
