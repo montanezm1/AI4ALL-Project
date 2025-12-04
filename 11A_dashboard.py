@@ -329,7 +329,7 @@ def main():
         with col1:
             st.subheader("📷 Uploaded Image")
             image = Image.open(uploaded_file).convert('RGB')
-            st.image(image, use_container_width=True)
+            st.image(image)
             
             # Image info
             st.info(f"""
